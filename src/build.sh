@@ -146,6 +146,21 @@ for branch in ${BRANCH_NAME//,/ }; do
 
     rm -f .repo/local_manifests/proprietary.xml
     if [ "$INCLUDE_PROPRIETARY" = true ]; then
+<<<<<<< HEAD
+=======
+      if [[ $branch =~ .*cm\-13\.0.* ]]; then
+        themuppets_branch=cm-13.0
+      elif [[ $branch =~ .*cm-14\.1.* ]]; then
+        themuppets_branch=cm-14.1
+      elif [[ $branch =~ .*lineage-15\.1.* ]]; then
+        themuppets_branch=lineage-15.1
+      elif [[ $branch =~ .*lineage-16\.0.* ]]; then
+        themuppets_branch=lineage-16.0
+      else
+        themuppets_branch=lineage-15.1
+        echo ">> [$(date)] Can't find a matching branch on github.com/TheMuppets, using $themuppets_branch"
+      fi
+>>>>>>> 2ee08f403bfce127e7f0841d3eeea1e2ff859dc2
       wget -q -O .repo/local_manifests/proprietary.xml "https://raw.githubusercontent.com/TheMuppets/manifests/$themuppets_branch/muppets.xml"
       /root/build_manifest.py --remote "https://gitlab.com" --remotename "gitlab_https" \
         "https://gitlab.com/the-muppets/manifest/raw/$themuppets_branch/muppets.xml" .repo/local_manifests/proprietary_gitlab.xml
@@ -155,6 +170,28 @@ for branch in ${BRANCH_NAME//,/ }; do
     builddate=$(date +%Y%m%d)
     repo sync -c --force-sync &>> "$repo_log"
 
+<<<<<<< HEAD
+=======
+    android_version=$(sed -n -e 's/^\s*PLATFORM_VERSION\.OPM1 := //p' build/core/version_defaults.mk)
+    if [ -z $android_version ]; then
+      android_version=$(sed -n -e 's/^\s*PLATFORM_VERSION\.PPR1 := //p' build/core/version_defaults.mk)
+      if [ -z $android_version ]; then
+        android_version=$(sed -n -e 's/^\s*PLATFORM_VERSION := //p' build/core/version_defaults.mk)
+        if [ -z $android_version ]; then
+          echo ">> [$(date)] Can't detect the android version"
+          exit 1
+        fi
+      fi
+    fi
+    android_version_major=$(cut -d '.' -f 1 <<< $android_version)
+
+    if [ "$android_version_major" -ge "8" ]; then
+      vendor="lineage"
+    else
+      vendor="cm"
+    fi
+
+>>>>>>> 2ee08f403bfce127e7f0841d3eeea1e2ff859dc2
     if [ ! -d "vendor/$vendor" ]; then
       echo ">> [$(date)] Missing \"vendor/$vendor\", aborting"
       exit 1
