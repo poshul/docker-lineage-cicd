@@ -70,6 +70,8 @@ if [ "$LOCAL_MIRROR" = true ]; then
   rm -f .repo/local_manifests/proprietary.xml
   if [ "$INCLUDE_PROPRIETARY" = true ]; then
     wget -q -O .repo/local_manifests/proprietary.xml "https://raw.githubusercontent.com/TheMuppets/manifests/mirror/default.xml"
+    /root/build_manifest.py --remote "https://gitlab.com" --remotename "gitlab_https" \
+      "https://gitlab.com/the-muppets/manifest/raw/mirror/default.xml" .repo/local_manifests/proprietary_gitlab.xml
   fi
 
   echo ">> [$(date)] Syncing mirror repository" | tee -a "$repo_log"
@@ -83,6 +85,36 @@ for branch in ${BRANCH_NAME//,/ }; do
   devices=${!device_list_cur_branch}
 
   if [ -n "$branch" ] && [ -n "$devices" ]; then
+    vendor=lineage
+    case "$branch" in
+      cm-14.1*)
+        vendor="cm"
+        themuppets_branch="cm-14.1"
+        android_version="7.1.2"
+        patch_name="android_frameworks_base-N.patch"
+        ;;
+      lineage-15.1*)
+        themuppets_branch="lineage-15.1"
+        android_version="8.1"
+        patch_name="android_frameworks_base-O.patch"
+        ;;
+      lineage-16.0*)
+        themuppets_branch="lineage-16.0"
+        android_version="9"
+        patch_name="android_frameworks_base-P.patch"
+        ;;
+      lineage-17.1*)
+        themuppets_branch="lineage-17.1"
+        android_version="10"
+        patch_name="android_frameworks_base-Q.patch"
+        ;;
+      *)
+        echo ">> [$(date)] Building branch $branch is not (yet) suppported"
+        exit 1
+        ;;
+      esac
+
+    android_version_major=$(cut -d '.' -f 1 <<< $android_version)
 
     mkdir -p "$SRC_DIR/$branch_dir"
     cd "$SRC_DIR/$branch_dir"
@@ -114,38 +146,14 @@ for branch in ${BRANCH_NAME//,/ }; do
 
     rm -f .repo/local_manifests/proprietary.xml
     if [ "$INCLUDE_PROPRIETARY" = true ]; then
-      if [[ $branch =~ .*cm\-13\.0.* ]]; then
-        themuppets_branch=cm-13.0
-      elif [[ $branch =~ .*cm-14\.1.* ]]; then
-        themuppets_branch=cm-14.1
-      elif [[ $branch =~ .*lineage-15\.1.* ]]; then
-        themuppets_branch=lineage-15.1
-      elif [[ $branch =~ .*lineage-16\.0.* ]]; then
-        themuppets_branch=lineage-16.0	  
-      else
-        themuppets_branch=lineage-15.1
-        echo ">> [$(date)] Can't find a matching branch on github.com/TheMuppets, using $themuppets_branch"
-      fi
       wget -q -O .repo/local_manifests/proprietary.xml "https://raw.githubusercontent.com/TheMuppets/manifests/$themuppets_branch/muppets.xml"
+      /root/build_manifest.py --remote "https://gitlab.com" --remotename "gitlab_https" \
+        "https://gitlab.com/the-muppets/manifest/raw/$themuppets_branch/muppets.xml" .repo/local_manifests/proprietary_gitlab.xml
     fi
 
     echo ">> [$(date)] Syncing branch repository" | tee -a "$repo_log"
     builddate=$(date +%Y%m%d)
     repo sync -c --force-sync &>> "$repo_log"
-
-    android_version=$(sed -n -e 's/^\s*PLATFORM_VERSION\.OPM1 := //p' build/core/version_defaults.mk)
-    if [ -z $android_version ]; then
-      android_version=$(sed -n -e 's/^\s*PLATFORM_VERSION\.PPR1 := //p' build/core/version_defaults.mk) #This is a brittle solution
-    elif [ -z $android_version ]; then
-      android_version=$(sed -n -e 's/^\s*PLATFORM_VERSION := //p' build/core/version_defaults.mk)
-    fi
-    android_version_major=$(cut -d '.' -f 1 <<< $android_version)
-
-    if [ "$android_version_major" -ge "8" ]; then
-      vendor="lineage"
-    else
-      vendor="cm"
-    fi
 
     if [ ! -d "vendor/$vendor" ]; then
       echo ">> [$(date)] Missing \"vendor/$vendor\", aborting"
@@ -163,36 +171,21 @@ for branch in ${BRANCH_NAME//,/ }; do
     # If needed, apply the microG's signature spoofing patch
     if [ "$SIGNATURE_SPOOFING" = "yes" ] || [ "$SIGNATURE_SPOOFING" = "restricted" ]; then
       # Determine which patch should be applied to the current Android source tree
-      patch_name=""
-      case $android_version in
-        4.4* )    patch_name="android_frameworks_base-KK-LP.patch" ;;
-        5.*  )    patch_name="android_frameworks_base-KK-LP.patch" ;;
-        6.*  )    patch_name="android_frameworks_base-M.patch" ;;
-        7.*  )    patch_name="android_frameworks_base-N.patch" ;;
-        8.*  )    patch_name="android_frameworks_base-O.patch" ;;
-	9*  )    patch_name="android_frameworks_base-P.patch" ;; #not sure why 9 not 9.0 but here's a fix that will work until android 90
-      esac
-
-      if ! [ -z $patch_name ]; then
-        cd frameworks/base
-        if [ "$SIGNATURE_SPOOFING" = "yes" ]; then
-          echo ">> [$(date)] Applying the standard signature spoofing patch ($patch_name) to frameworks/base"
-          echo ">> [$(date)] WARNING: the standard signature spoofing patch introduces a security threat"
-          patch --quiet -p1 -i "/root/signature_spoofing_patches/$patch_name"
-        else
-          echo ">> [$(date)] Applying the restricted signature spoofing patch (based on $patch_name) to frameworks/base"
-          sed 's/android:protectionLevel="dangerous"/android:protectionLevel="signature|privileged"/' "/root/signature_spoofing_patches/$patch_name" | patch --quiet -p1
-        fi
-        git clean -q -f
-        cd ../..
-
-        # Override device-specific settings for the location providers
-        mkdir -p "vendor/$vendor/overlay/microg/frameworks/base/core/res/res/values/"
-        cp /root/signature_spoofing_patches/frameworks_base_config.xml "vendor/$vendor/overlay/microg/frameworks/base/core/res/res/values/config.xml"
+      cd frameworks/base
+      if [ "$SIGNATURE_SPOOFING" = "yes" ]; then
+        echo ">> [$(date)] Applying the standard signature spoofing patch ($patch_name) to frameworks/base"
+        echo ">> [$(date)] WARNING: the standard signature spoofing patch introduces a security threat"
+        patch --quiet -p1 -i "/root/signature_spoofing_patches/$patch_name"
       else
-        echo ">> [$(date)] ERROR: can't find a suitable signature spoofing patch for the current Android version ($android_version)"
-        exit 1
+        echo ">> [$(date)] Applying the restricted signature spoofing patch (based on $patch_name) to frameworks/base"
+        sed 's/android:protectionLevel="dangerous"/android:protectionLevel="signature|privileged"/' "/root/signature_spoofing_patches/$patch_name" | patch --quiet -p1
       fi
+      git clean -q -f
+      cd ../..
+
+      # Override device-specific settings for the location providers
+      mkdir -p "vendor/$vendor/overlay/microg/frameworks/base/core/res/res/values/"
+      cp /root/signature_spoofing_patches/frameworks_base_config.xml "vendor/$vendor/overlay/microg/frameworks/base/core/res/res/values/config.xml"
     fi
 
     echo ">> [$(date)] Setting \"$RELEASE_TYPE\" as release type"
@@ -226,20 +219,14 @@ for branch in ${BRANCH_NAME//,/ }; do
       echo ">> [$(date)] Adding keys path ($KEYS_DIR)"
       # Soong (Android 9+) complains if the signing keys are outside the build path
       ln -sf "$KEYS_DIR" user-keys
-      sed -i "1s;^;PRODUCT_DEFAULT_DEV_CERTIFICATE := user-keys/releasekey\nPRODUCT_OTA_PUBLIC_KEYS := user-keys/releasekey\nPRODUCT_EXTRA_RECOVERY_KEYS := user-keys/releasekey\n\n;" "vendor/$vendor/config/common.mk"
-    fi
+      if [ "$android_version_major" -lt "10" ]; then
+        sed -i "1s;^;PRODUCT_DEFAULT_DEV_CERTIFICATE := user-keys/releasekey\nPRODUCT_OTA_PUBLIC_KEYS := user-keys/releasekey\nPRODUCT_EXTRA_RECOVERY_KEYS := user-keys/releasekey\n\n;" "vendor/$vendor/config/common.mk"
+      fi
 
-    if [ "$android_version_major" -ge "7" ]; then
-      jdk_version=8
-    elif [ "$android_version_major" -ge "5" ]; then
-      jdk_version=7
-    else
-      echo ">> [$(date)] ERROR: $branch requires a JDK version too old (< 7); aborting"
-      exit 1
+      if [ "$android_version_major" -ge "10" ]; then
+        sed -i "1s;^;PRODUCT_DEFAULT_DEV_CERTIFICATE := user-keys/releasekey\nPRODUCT_OTA_PUBLIC_KEYS := user-keys/releasekey\n\n;" "vendor/$vendor/config/common.mk"
+      fi
     fi
-
-    echo ">> [$(date)] Using OpenJDK $jdk_version"
-    update-java-alternatives -s java-1.$jdk_version.0-openjdk-amd64 &> /dev/null
 
     # Prepare the environment
     echo ">> [$(date)] Preparing build environment"
@@ -307,27 +294,6 @@ for branch in ${BRANCH_NAME//,/ }; do
             find out/target/product/$codename -maxdepth 1 -name "lineage-*-$currentdate-*.zip*" -type f -exec sh /root/fix_build_date.sh {} $currentdate $builddate \; &>> "$DEBUG_LOG"
           fi
 
-          if [ "$BUILD_DELTA" = true ]; then
-            if [ -d "delta_last/$codename/" ]; then
-              # If not the first build, create delta files
-              echo ">> [$(date)] Generating delta files for $codename" | tee -a "$DEBUG_LOG"
-              cd /root/delta
-              if ./opendelta.sh $codename &>> "$DEBUG_LOG"; then
-                echo ">> [$(date)] Delta generation for $codename completed" | tee -a "$DEBUG_LOG"
-              else
-                echo ">> [$(date)] Delta generation for $codename failed" | tee -a "$DEBUG_LOG"
-              fi
-              if [ "$DELETE_OLD_DELTAS" -gt "0" ]; then
-                /usr/bin/python /root/clean_up.py -n $DELETE_OLD_DELTAS -V $los_ver -N 1 "$DELTA_DIR/$codename" &>> $DEBUG_LOG
-              fi
-              cd "$source_dir"
-            else
-              # If the first build, copy the current full zip in $source_dir/delta_last/$codename/
-              echo ">> [$(date)] No previous build for $codename; using current build as base for the next delta" | tee -a "$DEBUG_LOG"
-              mkdir -p delta_last/$codename/ &>> "$DEBUG_LOG"
-              find out/target/product/$codename -maxdepth 1 -name 'lineage-*.zip' -type f -exec cp {} "$source_dir/delta_last/$codename/" \; &>> "$DEBUG_LOG"
-            fi
-          fi
           # Move produced ZIP files to the main OUT directory
           echo ">> [$(date)] Moving build artifacts for $codename to '$ZIP_DIR/$zipsubdir'" | tee -a "$DEBUG_LOG"
           cd out/target/product/$codename
@@ -394,15 +360,6 @@ for branch in ${BRANCH_NAME//,/ }; do
   fi
 done
 
-# Create the OpenDelta's builds JSON file
-if ! [ -z "$OPENDELTA_BUILDS_JSON" ]; then
-  echo ">> [$(date)] Creating OpenDelta's builds JSON file (ZIP_DIR/$OPENDELTA_BUILDS_JSON)"
-  if [ "$ZIP_SUBDIR" != true ]; then
-    echo ">> [$(date)] WARNING: OpenDelta requires zip builds separated per device! You should set ZIP_SUBDIR to true"
-  fi
-  /usr/bin/python /root/opendelta_builds_json.py "$ZIP_DIR" -o "$ZIP_DIR/$OPENDELTA_BUILDS_JSON"
-fi
-
 if [ "$DELETE_OLD_LOGS" -gt "0" ]; then
   find "$LOGS_DIR" -maxdepth 1 -name repo-*.log | sort | head -n -$DELETE_OLD_LOGS | xargs -r rm
 fi
@@ -411,4 +368,3 @@ if [ -f /root/userscripts/end.sh ]; then
   echo ">> [$(date)] Running end.sh"
   /root/userscripts/end.sh
 fi
-
